@@ -1,0 +1,802 @@
+---
+title: "GDP Italy"
+author: "Davide Mascolo"
+date: "01 giugno 2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, echo=FALSE, include=FALSE}
+knitr::opts_chunk$set(
+	echo = FALSE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+
+```{r}
+## Carico le librerie
+library(forecast)
+library(fpp2)
+library(quantmod)
+library(imputeTS)
+library(ggthemes)
+library(VIM)
+library(dygraphs)
+library(plotly)
+library(seasonal)
+library(tseries)
+```
+
+<center>
+### Presentazione del problema
+**Si vuole analizzare la serie storica relativa al PIL dell'Italia.**
+Per maggiori informazioni sui dati, clicca [qui.](https://fred.stlouisfed.org/series/CLVMNACNSAB1GQIT)
+
+
+```{r}
+## Carico i dati
+
+## Not Seasonally Adjusted
+Italy_Not <- getSymbols("CLVMNACNSAB1GQIT", src = "FRED",
+                  auto.assign = F)
+```
+
+```{r}
+## Informazioni sui dati
+message("Numero di anni: ", nrow(Italy_Not)/frequency(Italy_Not))
+
+## Struttura
+## str(Italy_Not)
+
+## Data Wrangling
+## Aggrego i dati
+Italy_Not <- ts(Italy_Not, start = c(1996, 1), frequency = 4)
+
+## Ci sono valori mancanti?
+table(is.na(Italy_Not))
+
+## Lo vediamo anche graficamente
+aggr(Italy_Not)
+
+## Outliers
+tsoutliers(Italy_Not)$index
+
+## Quali sono i valori anomali?
+Italy_Not[tsoutliers(Italy_Not)$index]
+
+## Con quali valori andrebbero rimpiazzati?
+tsoutliers(Italy_Not)$replacements
+```
+
+#### Analisi Descrittiva
+```{r}
+## Graficamente
+dygraph(Italy_Not, main = "GDP Italy (1996-2020, Not Seasonally)") %>%
+  dyRangeSelector()
+```
+
+* La serie, ovviamente, presenta una forte componente stagionale.
+
++ I picchi, infatti, si ripetono periodicamente al secondo ed al quarto trimestre per ogni anno; mentre nel primo e terzo trimestre la serie raggiunge sempre un calo.
+
++ Un evento anomalo accade nell'ultimo trimestre del 2008, quando la serie non va al rialzo, bensi' al ribasso e cio' e' dovuto alla Grande Recessione.
+
++ Altra anomalia la si registra al secondo trimestre dell'anno 2020; infatti, da come abbiamo detto precedentemente, il secondo semestre di ogni anno fa registrare sempre una crescita, ma ciò non vale per il 2020 e quest'effetto è legato al Covid. Nell 'ultimo trimestre del 2020, si registra un aumento che rispecchia l'andamento di tutti gli anni in Q4, ma questo aumento è molto meno marcato rispetto a tutti gli altri anni.
+
++ La serie storica in esame non è **stazionaria**, in quanto una serie si definisce tale se le sue proprietà statistiche non dipendono dal tempo, cioè dal momento in cui la serie viene osservata. Ciò equivale a dire che una serie storica con trend o stagionalità non sarà stazionaria, dato che il trend e la stagionalità influenza il valore della serie in diversi istanti temporali.
+
++ Se invece ci trovassimo dinanzi una seria con andamento ciclico ma senza stagionalità e trend, la serie risulterebbe sicuramente stazionaria, in quanto i cicli sarebbero aperiodici.
+
++ Una serie stazionaria avrà un aspetto orizzontale, con variazioni più o meno costanti che ricadano nello stesso range di valori prestabilito.
+
+<br>
+
+```{r}
+## Seasonal Subseries Plot
+ggsubseriesplot(Italy_Not)
+```
+
+* Fissato il trimestre di riferimento, ed avanzando per ogni trimestre, stiamo osservando i valori per ogni anno.
+
+* Le linee blu orizzontali indicano le medie per ogni periodo, in questo caso per ogni trimestre.
+
+* La prima linea blu è il valore medio del PIL riferito al primo trimestre di tutti gli anni.
+
+* La seconda linea blu è sempre il valore medio del PIL per tutti gli anni, ma questa volta riferito al secondo trimestre e così via.
+
+* Confermo quanto detto prima, ovvero che per tutti gli anni il primo trimestre presenta sempre un calo e quindi una media del PIL sempre più bassa rispetto agli altri trimestri.
+
+* Il valore medio più alto, invece, si registra nell'ultimo trimestre.
+
+* Il fatto che la media cambi e non resti costante per ogni sotto-periodo significa che c'è stagionalità nei dati.
+
+* Possiamo anche capire che la serie è caratterizzata da variazioni che sono crescenti nel tempo. In particolare, in Q1 e Q3 abbiamo un forte trend crescente; anche Q4 presenta un trend crescente ma meno marcato rispetto a Q1 e Q3.
+
+* Discorso opposto, invece, per Q2, che presenta un trend descrescente.
+
+<br>
+
+```{r}
+## Correlogramma: ACF Plot - PCF Plot
+ggAcf(Italy_Not, lag.max = 40)
+pacf(Italy_Not, lag.max = 40)
+```
+
+* Il valore di autocorrelazione più alto lo osserviamo al ritardo due.
+
+*  I picchi tendono ad essere a due quarti di distanza l'uno dall'altro, quindi i punti di massimo tendono a ripetersi a 2 trimestri di distanza tra di loro.
+
+* Il valore dell'autocorrelazione al ritardo zero è sempre pari ad uno.
+
+* La serie non è white noise, in quanto le autocorrelazioni sono più estreme rispetto alle bande di confidenza; infatti, per le serie white noise ci aspettiamo che ogni autocorrelazione sia prossima allo 0, ovviamente non esattamente uguale allo zero perchè c'è sempre una componente d'errore dovuta alla variazione casuale.
+
+* Ancora, la serie conferma avere un leggero trend. Infatti, le autocorrelazioni per i piccoli ritardi tendono ad assumere valori elevati e positivi, dato che le osservazioni vicine nel tempo sono vicine tra di loro anche per la dimensione.
+
+* Quando i dati sono stagionali, invece, le autocorrelazioni sono più grandi per i multipli della frequenza stagionale.
+
+* In questo caso, notiamo entrambi gli effetti; infatti la diminuzione lenta dell'ACF all'aumentare del ritardo è dovuta al trend, mentre la forma ad onda è dovuta alla stagionalità.
+
+* Infine, l'ACF mostra i picchi per il ritardo due, quattro, sei, otto e cos' via...questo indica una stagionalità di lungheza due.
+
+* Il correlogramma è utile anche per identificare se la serie storica è stazionaria o meno. In questo caso, l'ACF diminuisce lentamente e quindi la serie storica non è stazionaria. Il valore p^(1) è il più grande e positivo e quindi la tesi è confermata.
+
+<br>
+
+```{r}
+## Test per la stazionarietà.
+adf.test(Italy_Not)
+```
+
+* Il P-Value è maggiore del livello alpha al 5% e quindi non rifiuto l'ipotesi H0. La serie non è stazionaria.
+
+* Un modo per rendere stazionaria una serie temporale è calcolare le differenze tra osservazioni consecutive. Questo processo è noto come **differenziazione**.
+
+* Una trasformazione logaritmica può aiutare a stabilizzare la varianza della serie temporale. La differenza, invece, può aiutare a stabilizzare la media di una serie storica rimuovendo i cambiamenti di livello e quindi eliminando(o riducendo) la tendenza e la stagionalità.
+
+**Applico la prima differenziazione e rifaccio il test**
+<br>
+
+```{r}
+Italy_Notd1 <- diff(Italy_Not)
+## Test
+adf.test(Italy_Notd1)
+```
+
+* Il P-Value è ancora maggiore del livello alpha al 5% e quindi non rifiuto l'ipotesi H0. La serie non è ancora stazionaria.
+
+** Prendo una differenza del secondo ordine e rifaccio il test.**
+<br>
+
+```{r}
+Italy_Notd2 <- diff(Italy_Notd1)
+## Test
+adf.test(Italy_Notd2)
+```
+
+* Il P-Value è minore del livello alpha al 5% e quindi rifiuto l'ipotesi H0. La serie è stazionaria.
+<br>
+
+```{r}
+## Graficamente
+par(mfrow = c(1,4))
+plot(Italy_Not, ylab = "GDP Italy", main = "Data")
+plot(Italy_Notd1, ylab = "", main = "First Order Diff")
+plot(Italy_Notd2, ylab = "", main = "Second Order Diff")
+plot(diff(log(Italy_Not)), ylab = "",
+     main = "Diff With Log Transformation")
+```
+
+* Con il secondo ordine di differenziazione si riesce a catturare l'improvviso crollo che si ha nel 2008.
+
+<br>
+
+* Cerco di catturare la componente di trend della serie attraverso l'utilizzo di una semplice media mobile centrata di ordine 4 che fornisce i risultati simmetrici.
+```{r}
+mm4 <- ma(Italy_Not, order = 4)
+
+# Graficamente
+autoplot(Italy_Not, series = "Data") +
+  autolayer(mm4, series = "MM 4", size = 1) +
+  xlab("Year") + ylab("Value") +
+  ggtitle("GDP Italy") +
+  scale_colour_manual(values = c("Data" = "grey",
+                                 "MM 4" = "red"),
+                      breaks = c("Data", "MM 4"))
+```
+
+* La media mobile di ordine 4 è in grado di riprodurre la tendenza di fondo della serie ed è anche in grado di catturare i cambiamenti di livello negli anno 2008, 2012 ed il crollo avvenuto nel 2020.
+
+* L'ordine della media mobile determina il grado di fluidità della
+serie. Più l'ordine è grande e più la serie sarà liscia.
+
+* Al contrario, più l'ordine è piccolo, più la serie seguirà da vicino i dati e sarà più irregolare.
+
+* Le medie mobili sono di solito di ordine dispari, così da essere
+simmetriche e quindi lasciare lo stesso numero di valori
+mancanti sia per valori bassi che alti.
+
+* Per rendere simmetrica una media mobile di ordine pari, è
+possibile applicare una media mobile alla media mobile.
+
+* Ad esempio, potremmo prendere una media mobile di ordine quattro e poi applicare un'altra media mobile di ordine 2 ai risultati in modo
+da ottenere una serie simmetrica.
+
+* In questo caso, utilizziamo il parametro centre per centrare la media mobile, di conseguenza questo codice sopra scritto rappresenta solo un'alternativa.
+
+<br>
+```{r}
+ma4   <- ma(Italy_Not, order = 4, centre = F)
+ma2x4 <- ma(Italy_Not, order = 4, centre = T)
+```
+
+#### Decomposizione della serie storica
+
+* Questo processo vuole decomporre la serie nelle sue componenti, per capire quali di esse determina l'evoluzione del fenomeno nel tempo.
+
+*La componente di trend determina l'andamento di fondo o la tendenza di lungo periodo della serie.
+
+* La componente ciclica, determina le fluttuazioni di mesio-lungo periodo che non sono periodiche.
+
+* La componente stagionale, determina invece fluttuazioni che si ripetono con regolarità nel tempo. Solitamente, questa componente ha una frequenza infra-annuale, in questo caso trimestrale.
+
+* Infine, la componente residua rappresenta tutto ciò che non riusciamo a catturare con il modello.
+
+* Nella decomposizione della serie, la componente ciclica e quella di trend vengono considerate insieme e per questo motivo si parla di componente di tendenza ciclica.
+
+* ## In conclusione, tre componenti caratterizzano la serie:
+* **Tendenza ciclica**
+* **Stagionalità**
+* **Residua**
+
+* **Obiettivo:** estrarre le tre componenti per capire quali fattori influenzano il fenomeno.
+<br>
+
+#### Decomposizione additiva classica
+
+* **Step 1:**stimare la componente di tendenza ciclica con l'uso della media mobile centrata di ordine quattro.
+
+* **Step 2:** calcolo la serie dentrendizzata. Sottraggo la componente di tendenza ciclica alla serie originale.
+
+* **Step 3:** stimare la componente stagionale sfruttando la serie dentrendizzata. La componente stagionale per ogni stagione è stimata come media dei valori detrendizzati per quella stagione. In questo caso, con dati trimestrali, la componente stagionale di un trimestre è la media di tutti i valori detrendizzati di quel trimestre.
+
+* **Step 4:** stimare la componente residua (R^t). Possiamo ottenerla andando a sottrarre dalla serie originale la componente di trend/ciclica stimata e la componente stagionale.
+
+```{r}
+TT <- ma(Italy_Not, 4)
+Italy_Not_detrended <- Italy_Not - TT
+## Graficamente
+autoplot(Italy_Not_detrended) +
+  ggtitle("GDP ITALY") +
+  ylab("Additive Detrended data")
+```
+
+* La serie detrendizzata è caratterizzata da fluttuazioni periodiche che sono relative alla componente stagionale, ma queste fluttuazioni non sono costanti perchè influenzate dalla componente residua.
+
+```{r}
+st <- tapply(Italy_Not_detrended,
+             cycle(Italy_Not_detrended),
+             function(x) mean(x,na.rm = TRUE))
+## Componente stagionale a media 0.
+St0 <- st - mean(st)
+
+## Lunghezza della serie
+tt  <- length(Italy_Not_detrended)
+## Frequenza della stagionalitÃ 
+m   <- frequency(Italy_Not_detrended)
+
+## Replichiamo il valore St0 per tutti gli anni della serie.
+St <- ts(rep(St0,ceiling(tt/m))[1:tt],
+         frequency = 4, start = c(1996,1))
+## Componente stagionale completa per tutte le osservazioni che ho
+## nella serie.
+```
+
+```{r}
+## Graficamente
+autoplot(St) +
+  ggtitle("GDP Italy") +
+  ylab("Additive Seasonal Component")
+```
+
+* La componente stagionale stimata presenta delle oscillazioni periodiche e regolari con ampiezza costante; ovvero la stagionalità è costante di anno in anno.
+
+* Questo rispecchia l'assunzione sulla stagionalità alla base dell'assunzione classica, la quale appunto ipotizza che la componente stagionale sia costante nel tempo(di anno in anno).
+
+````{r}
+Rt <- Italy_Not - TT - St
+```
+
+**Analizzo la componente residua**
+```{r}
+checkresiduals(Rt)
+```
+
+* La componente residua risulta più o meno costante intorno allo zero, ad esclusione del problema legato all'anno 2020. I residui non sono correlati tra loro, ma tuttavia non hanno una forma normale.
+
+#### Decomposizione moltiplicativa classica
+
+* Gli step previsti sono analoghi a quelli della decomposizione precedente, con l'unica differenza che riguarda l'ultimo step. Con la decomposizione moltiplicativa, infatti, **NON** sottraiamo la componente stagionale e quella di tendenza ciclica, ma si divide la serie originale per il prodotto delle due componenti stimate.
+
+```{r}
+TTM <- ma(Italy_Not, 4)
+Italy_Not_detrended_mult <- Italy_Not / TTM
+## Graficamente
+autoplot(Italy_Not_detrended_mult) +
+  ggtitle("GDP ITALY") +
+  ylab("Multiplicative Detrended data")
+stm <- tapply(Italy_Not_detrended_mult,
+              cycle(Italy_Not_detrended_mult),
+              function(x) mean(x,na.rm = TRUE))
+St0m <- stm - mean(stm)
+ttm  <- length(Italy_Not_detrended_mult)
+mm   <- frequency(Italy_Not_detrended_mult)
+Stm <- ts(rep(St0m,ceiling(ttm/mm))[1:ttm],
+          frequency = 4, start = c(1996,1))
+## Graficamente
+autoplot(Stm) +
+  ggtitle("GDP Italy") +
+  ylab("Multiplicative Seasonal Component")
+
+## Step4
+RtM <- Italy_Not / (TTM * Stm)
+## Grafico componente residua
+checkresiduals(RtM)
+```
+
+<br>
+
+#### Confronto
+```{r}
+## Decomposizione Classica
+
+## Additiva
+additive <- decompose(Italy_Not, type = "additive")
+autoplot(additive)
+
+## Moltiplicativa
+moltiplicative <- decompose(Italy_Not, type = "multiplicative")
+autoplot(moltiplicative)
+```
+
+* La barra grigia mostra l'ampiezza relativa agli effetti.
+* Più è grande e più la variazione della componente sarà piccola rispetto alla serie osservata, di conseguenza più avrà influenza nella serie.
+
+* I grafici rappresentano rispettivamente la serie storica osservata, la componente di trend, la componente stagionale ed infine quella residua.
+
+* Per quanto detto prima, abbiamo che la componente più influente è quella stagionale, seguita da quella dei residui e da quella di trend.
+
+<br>
+
+```{r}
+## Graficamente
+## Confronto tra la serie destagionalizzata e la componente di
+## tendenza ciclica stimata con il metodo additivo.
+autoplot(Italy_Not) +
+  autolayer(seasadj(additive),
+            series = "Seasonally Adjusted", size = 1) +
+  autolayer(trendcycle(additive),
+            series = "Trend-cycle", size = 1) +
+  theme(legend.position = "bottom") +
+  ylab("Value")
+```
+
+* Vediamo come la componente di tendenza ciclica stimata con il metodo additivo sia troppo smooth e non riesca a catturare delle variazioni improvvise al rialzo o al ribasso.
+
+**Proviamo con un'altra decomposizione.**
+
+#### Decomposizione X11
+
+* Metodo fortemente utilizzato per scomporre serie storiche con stagionalità mensile o trimestrale.
+
+* Si basa sulla decomposizione classica ma richiede più passaggi e
+metodi più complessi per superare i limiti della decomposizione
+classica.
+
+* Questa tecnica fornisce una stima completa della componente di
+tendenza ciclica e quindi abbiamo a disposizione anche le
+osservazioni nella parte iniziale e finale del trend stimato.
+
+* Riesce a gestire la presenza di valori anomali o variazioni
+legate agli effetti di calendario.
+
+```{r}
+## Specificazione
+x11.fit <- seas(Italy_Not,
+                transform.function = "auto", x11 = "")
+
+## Graficamente
+autoplot(x11.fit) +
+  ggtitle("X11 Decomposition")
+
+## Analisi dei residui
+checkresiduals(x11.fit)
+```
+
+* Differenze tra le componenti stimate con il metodo
+della decomposizione classica ed il metodo X11, partendo dalla componente di tendenza ciclica.
+
+<br>
+
+```{r}
+autoplot(Italy_Not,
+         series = "Data", size = 1) +
+  autolayer(trendcycle(additive),
+            series = "Additive", size = 1) +
+  autolayer(trendcycle(x11.fit),
+            series = "X11", size = 1) +
+  guides(colour = guide_legend(title = "Trend-Cycle")) +
+  theme(text = element_text(size = 20)) +
+  ylab("Value")
+```
+
+* La componente di tendenza ciclica con il metodo X11 fornisce
+delle informazioni complete sul comportamento della serie, ovvero sia nella parte iniziale della serie che nella parte finale,
+mentre questo non avviene con il metodo della decomposizione
+moltiplicativa classica.
+
+* Altra differenza importante si nota nelle fasi in cui abbiamo
+variazioni improvvise.
+
+Guardando al picco tra il 2000 ed il 2003, la componente stimata
+con il metodo X11 riesce a seguire meglio il picco al rialzo nei
+dati e quindi è meno smooth rispetto al metodo moltiplicativo
+classico. Stesso discorso per il picco che abbiamo tra il 2006 ed il 2007, ma anche per la caduta che abbiamo nell'anno 2008.
+
+* Il metodo X11 consente alla stagionalità di cambiare nel tempo.
+```{r}
+ggsubseriesplot(seasonal(additive)) +
+  ylab("Additive Seasonal")
+```
+
+* Le variazioni della componente stagionale classica sono costanti nel tempo.
+
+```{r}
+ggsubseriesplot(seasonal(x11.fit)) +
+  ylab("X11 Seasonal")
+```
+
+* Le variazioni della componente stagionale X11 variano negli anni per ogni trimestre.
+
+* Per il primo e secondo trimestre abbiamo oscillazioni piccole, mentre per il terzo e quarto trimestre le oscillazioni sono maggiori.
+
+
+####  DECOMPOSIZIONE SEATS
+
+* Seats sta per "Seasonal Extraction in ARIMA Time Series."
+
+* Come per il metodo X11, anche il metodo (X-13)SEATS funziona solo
+con dati trimestrali e mensili..
+
+```{r}
+## Specificazione
+X13.seats <- seas(Italy_Not)
+## Graficamente
+autoplot(X13.seats) +
+  ggtitle("X13 Seats Decomposition")
+## Residui
+checkresiduals(X13.seats)
+```
+
+```{r}
+## Decomposizione X11 - X13 Vs. Decomposizione classica
+autoplot(Italy_Not, series = "Data", size = 1) +
+  autolayer(trendcycle(additive),
+            series = "Additive", size = 1) +
+  autolayer(trendcycle(x11.fit),
+            series = "X11", size = 1) +
+  autolayer(trendcycle(X13.seats),
+            series = "X13-SEATS", size = 1) +
+  guides(colour = guide_legend(title = c("Data" = "grey50",
+                                         "Multiplicative" = "red",
+                                         "X11" = "blue",
+                                         "X13-SEATS" = "green"),
+                               breaks = c("Data", "Multiplicative",
+                                          "X11", "X13-SEATS")) +
+           theme(text = element_text(size = 20))) +
+  ylab("Value")
+```
+
+* Le differenze tra la decomposizione X11 e X13 sono molto piccole.
+
+* Notiamo come la differenza nella stima della componente di tendenza ciclica sia piccolissima.
+
+* L'unica differenza che si nota, ma minima, è che la componente di tendenza ciclica ottenuta con il metodo X13 è leggermente più
+smooth, in alcuni punti,  rispetto a quella ottenuta con il metodo X11.
+
+**Confrontiamo la componente residua e quella stagionale. Decomposizione X11 Vs. Decomposizione X13-SEATS. **
+```{r}
+autoplot(remainder(X13.seats), size = 1, series = "X13-SEATS") +
+  autolayer(remainder(x11.fit), size = 1, series = "X11") +
+  ylab("Remainder") +
+  theme(text = element_text(size = 20))
+```
+
+* Nessuno dei due metodi riesce a cogliere il problema che abbiamo nell'anno 2020.
+
+** Componente Stagionale ** 
+
+```{r}
+autoplot(seasonal(X13.seats), size = 1, series = "X13-SEATS") +
+  autolayer(seasonal(x11.fit), size = 1, series = "X11") +
+  ylab("Seasonal") +
+  theme(text = element_text(size = 20))
+```
+
+* Stesso discorso per la componente stagionale. Le differenze sono minime.
+
+** DECOMPOSIZIONE STL **
+
+* STL = Seasonal and Trend decomposition using Loess.
+
+* Regressione non parametrica che può essere vista come una
+generalizzazione della media mobile, in quanto utilizza una
+regressione polinomiale ponderata locale, ciò su sottinsiemi di
+dati per stimare una funzione smooth non lineare che può essere
+usata per modellare la componente di tendenza ciclica.
+
+** VANTAGGI **
+* A differenza di SEATS e X11, è in grado di gestire qualsiasi tipo di stagionalità. quindi non solo dati trimestrali e mensili.
+
+* La componente stagionale può cambiare nel tempo e la velocità di variazione può essere controllata dall'utente.
+
+* La velocità della tendenza ciclica può essere controllata
+dall'utente.
+
+* Robusto agli outliers.
+
+** SVANTAGGI ** 
+*  Non gestisce automaticamente la variazione legata ai giorni di
+negoziazione o agli effetti di calendario.
+
+* Consente solo la decomposizione additiva.
+
+* Si può ottenere una decomposizione moltiplicativa trasformando i dati con il logaritmo, per poi fare la "back-transformation" delle componenti.
+
+* Le decomposizioni tra quella additiva e quella moltiplicativa
+possono essere ottenute utilizzando una trasformazione di
+Box-Cox dei dati con 0<Lambda<1.
+
+* Un valore di Lambda = 0 corrisponde alla decomposizione
+moltiplcativa, mentre Lambda = 1 equivale ad una decomposizione
+additiva.
+
+<br>
+
+```{r}
+## Specificazione
+mstl.fit <- mstl(Italy_Not, lambda = 0)
+## Graficamente
+autoplot(mstl.fit) +
+  ggtitle("STL Decomposition")
+```
+ 
+* Il problema della componente residua nel 2020 non viene comunque risolto, ma per tutta la restante parte della serie, i residui si comportano abbastanza bene. Sono distribuiti intorno al valore 0 e tuttavia hanno una varianza costante anche in tempi problematici come il 2008.
+
+<br>
+
+* Per modellare la non linearità della serie, cerchiamo di capire quali sono i principali eventi che hanno caraterizzato l'evoluzione del PIL.
+
+* Iniziamo l'analisi stimando un modello di regressione lineare semplice, ponendo come unico regressore il trend.
+```{r}
+fit.lin   <- tslm(Italy_Not ~ trend)
+summary(fit.lin)
+```
+
+* Il coefficiente legato al trend è positivo, questo significa che il valore medio del PIL aumenta ci rica 182.62 ogni anno.
+
+* Come vedremo, questo modello assume che la pendenza della retta sia sempre costante ed in questo caso non è adattabile a questi dati.
+
+<br>
+
+```{r}
+## Analisi dei Residui
+checkresiduals(fit.lin)
+```
+
+* Il test di Breusch-Godfrey verifica l'autocorrelazione tra residui. Il p-value è minore del livello di alpha e ciò ci fa rifiutare l'ipotesi Nulla, ovvero rifiuto l'ipotesi d'incorrelazione tra residui.
+
+* Dalla serie dei residui, si nota che c'è una forte variazione che non è costante nel tempo.
+
+* Il correlogramma dei residui indica che ci sono informazioni non catturate, in quanto abbiamo autocorrelazioni positive che vanno lentamente a zero e che indicano che i residui sono autocorrelati; quindi c'è una componente di trend che non è stata catturata.
+
+<br> 
+
+** Stimo un trend esponenziale. **
+```{r}
+fit.exp   <- tslm(Italy_Not ~ trend, lambda = 0)
+## Al posto di utilizzare il log sulla y, utilizziamo il parametro lambda = 0, cosÃ¬ da ottenere le previsioni giÃ  back-transformed rispetto alla scala originale.
+summary(fit.exp)
+```
+
+* Il coefficiente stimato per il trend è 0.000481.
+* Data una variazione unitaria del trend, in media, il PIL aumenta approssimativamente dello 0.0481.
+
+```{r}
+## Graficamente
+checkresiduals(fit.exp)
+```
+
+* Anche il trend esponenziale sembra non adattarsi bene ai dati
+
+* Per modellare la non linearità della serie, cerchiamo di capire quali sono i principali eventi che hanno caratterizzato  l'evoluzione del PIL Italiano.
+
+* Fino al 2008 si assiste ad un aumento del PIL.
+
+* Dal 2008, a causa della Grande Recessione, si assiste ad un improvviso calo fino al 2009.
+
+* Dal 2010...
+
+```{r}
+## Costruisco diverse variabili
+t        <- time(Italy_Not)
+tau.2008 <- 2008
+tau.2014 <- 2014
+tau.2020 <- 2020
+
+## Variabile che vale 0 fino al 2007 e poi t - tao.
+tau1 <- ts(pmax(0, t - tau.2008), start = 1996)
+## Variabile che vale 0 fino al 2013 e poi t - tao.
+tau2 <- ts(pmax(0, t - tau.2014), start = 1996)
+## Variabile che vale 0 fino al 2019 e poi t - tao.
+tau3 <- ts(pmax(0, t - tau.2020), start = 1996)
+
+## Specificazione
+fit.pw <- tslm(Italy_Not ~ t + tau1 + tau2 + tau3)
+
+## Graficamente
+autoplot(Italy_Not) +
+  autolayer(fitted(fit.lin), series = "Linear") +
+  autolayer(fitted(fit.exp), series = "Exponential") +
+  autolayer(fitted(fit.pw),  series = "Piecewise (3 knots)") +
+  ggtitle("GDP Italy") +
+  guides(colour = guide_legend(title = "Trend"))
+```
+
+* I diversi valori delle pendenze stimate nei tre periodi, mette in risalto la non linearità della serie.
+
+* Graficamente si la differenza tra il trend lineare, quello esponenziale e quello lineare a tratti, che si adatta molto meglio ai dati.
+
+* Con questa specificazione, quindi, catturiamo molte più informazioni rispetto alle specificazioni precedenti.
+
+<br>
+
+```{r}
+## Analisi dei Residui
+checkresiduals(fit.pw)
+```
+
+* I residui oscillano intorno allo zero, ma tuttavia non hanno varianza costante. Inoltre, il modello non riesce a catturare il crollo improvviso del 2008 e del 2020.
+
+* I residui sono correlati tra di loro e non hanno una distribuzione normale.
+
+* Invece di utilizzare una specificazione lineare a tratti, si può
+provare ad utilizzare una spline cubica, che consiste in una 
+specificazione polinomiale a tratti.
+
+* In questo modo, non si avranno più rette per ogni intervallo, ma curve  che si adattano in modo flessibile ai dati.
+
+```{r}
+## Specificazione
+fit.cubic <- tslm(Italy_Not ~ t + I(t^2) + I(t^3) + I(tau1^3) +
+                    I(tau2^3) + I(tau3^3)) 
+
+## Graficamente
+autoplot(Italy_Not) +
+  autolayer(fitted(fit.lin), series = "Linear") +
+  autolayer(fitted(fit.exp), series = "Exponential") +
+  autolayer(fitted(fit.pw), series = "Piecewise") +
+  autolayer(fitted(fit.cubic), series = "Cubic Spline",
+            size = 1) +
+  ggtitle("GDP Italy") +
+  guides(colour = guide_legend(title = "Trend"))
+```
+
+* La specificazione Spline cubica approssima abbastanza bene ai dati, seguendone il reale andamento e catturandone l'andamento non lineare.
+
+<br>
+
+```{r}
+## Residui
+checkresiduals(fit.cubic)
+
+## Natural Cubic Smoothing Splines: slinef()
+autoplot(splinef(Italy_Not, lambda = 0)) +
+  ggtitle("Natural Cubic Smoothing Splines") +
+  ylab("Data")
+
+## Residui
+checkresiduals(splinef(Italy_Not, lambda = 0))
+```
+
+** Partendo dall'autocovarianza, calcolo l'autocorrelazione dividendo per la varianza.** 
+
+* L'autocorrelazione è un indice indipendente dall'unità di misura e che è in grado di misurare la forza dei legami lineari esistenti nella serie, in particolare misura la forza della dipendenza lineare tra xp e xp+h, ovvero osservazioni della stessa serie ma rilevati in due diversi istanti temporali.
+
+* Valore dell'autocorrelazione:
+```{r}
+
+## Calcoliamo le varie comopnenti
+## Media Campionaria
+medcamp <- mean(Italy_Not)
+
+## Lunghezza della serie
+tt <- length(Italy_Not)
+
+## Serie che va da t=5 fino alla fine
+Italy_Noth <- Italy_Not[5:tt]
+
+## Serie che va dalla prima osservazione fino a tt
+Italy_Nott <- Italy_Not[1:(tt-4)]
+
+## Sottraggo la media ad entrambe
+zh <- Italy_Noth - medcamp
+zt <- Italy_Nott - medcamp
+
+## Calcolo l'autocovarianza
+gam <- sum(zh * zt) / tt
+
+## Varianza
+s2 <- var(Italy_Not) * (tt - 1)/tt
+
+## Autocorrelazione
+gam / s2
+```
+
+<br>
+
+#### Forza del trend e della stagionalità
+```{r}
+## Estraggo le componenti
+cmp <- decompose(Italy_Not)
+
+## Forza del trend
+Ft <- max(0, (1 - (var(cmp$random, na.rm = T) /
+                     var(cmp$random + cmp$trend, na.rm = T))))
+## Trend molto forte
+
+
+## Forza della stagionalità
+Fs <- max(0, (1 - var(cmp$random, na.rm = T) / 
+                var(cmp$random + cmp$seasonal, na.rm = T)))
+
+rbind(Trend = Ft,
+           Seasonality = Fs)
+```
+
+<br>
+
+#### Previsione con la decomposizione
+
+* Utilizzo i dati destagionalizzati con vari metodi di previsione e successivamente aggiungo le previsioni seasonal naive per rispettare la componente stagionale.
+```{r}
+## Train - Test
+ob.train <- window(Italy_Not, start = c(1996,1),end = c(2017,4))
+ob.test  <- window(Italy_Not, start = c(2018,1),end = c(2020,4))
+
+## Semplici metodi di previsione
+av <- meanf(ob.train, h = 12)
+nv <- naive(ob.train, h = 12)
+sv <- snaive(ob.train, h = 12)
+
+## Graficamente
+autoplot(ob.train) +
+  autolayer(av, series = "Mean", PI = F) +
+  autolayer(nv, series = "Naive", PI = F) +
+  autolayer(sv, series = "Snaive", PI = F) +
+  ggtitle("Simple Forecasting Methods") +
+  ylab("Value")
+
+
+## Performance
+## Average
+accuracy(av, ob.test)
+
+## Naive
+accuracy(nv, ob.test)
+
+## Snaive
+accuracy(sv, ob.test)
+```
+
